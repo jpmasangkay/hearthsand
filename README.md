@@ -16,8 +16,6 @@ A high-performance, 60 FPS 2D top-down pixel-art settlement simulation fused wit
 [![License: MPL-2.0](https://img.shields.io/badge/License-MPL--2.0-yellow.svg?style=for-the-badge)](LICENSE)
 
 🕹️ **Play in Browser (GitHub Pages):** [jpmasangkay.github.io/hearthsand](https://jpmasangkay.github.io/hearthsand/)  
-🖥️ **Repository:** [github.com/jpmasangkay/hearthsand](https://github.com/jpmasangkay/hearthsand)
-
 ---
 
 ## 📸 Screenshots
