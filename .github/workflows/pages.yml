@@ -34,10 +34,14 @@ jobs:
       - name: Build WASM release binary
         run: cargo build --target wasm32-unknown-unknown --release
 
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
       - name: Stage static site in dist/
         run: |
           rm -rf dist
           mkdir -p dist
+          touch dist/.nojekyll
           cp web/index.html dist/index.html
           cp target/wasm32-unknown-unknown/release/hearthsand.wasm dist/hearthsand.wasm
           MQ_JS=$(python3 -c '
