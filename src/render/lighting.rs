@@ -37,6 +37,26 @@ void main() {
 }
 "#;
 
+/// Merged lightmap multiply + additive radial bloom shader (M8.2):
+/// Used with BlendState(Equation::Add, SourceAlpha, SourceColor) so hardware blending computes:
+///   out.rgb = dst.rgb * light + light * (color.a * tex.a)
+/// where `tex.a` holds the radial bloom intensity accumulated in `lightmap_rt` and `color.a`
+/// is 1.0 when bloom is enabled (F5 OFF) or 0.0 when bloom is skipped (F5 ON).
+const COMPOSITE_BLOOM_FRAGMENT_SHADER: &str = r#"#version 100
+precision mediump float;
+varying lowp vec4 color;
+varying lowp vec2 uv;
+
+uniform sampler2D Texture;
+
+void main() {
+    vec4 tex = texture2D(Texture, uv);
+    vec3 light = max(color.rgb * tex.rgb, vec3(0.28, 0.31, 0.48));
+    float bloom_a = color.a * tex.a;
+    gl_FragColor = vec4(light, bloom_a);
+}
+"#;
+
 const RADIAL_GLOW_FRAGMENT_SHADER: &str = r#"#version 100
 precision mediump float;
 varying lowp vec4 color;
@@ -48,6 +68,21 @@ void main() {
     float falloff = 1.0 - dist;
     float glow = falloff * falloff * (0.45 + 0.55 * falloff);
     gl_FragColor = vec4(color.rgb, color.a * glow);
+}
+"#;
+
+/// Accumulates pre-multiplied RGB light and alpha bloom weight into `lightmap_rt` in one pass.
+const RADIAL_GLOW_ACCUM_FRAGMENT_SHADER: &str = r#"#version 100
+precision mediump float;
+varying lowp vec4 color;
+varying lowp vec2 uv;
+
+void main() {
+    vec2 d = uv - vec2(0.5, 0.5);
+    float dist = clamp(length(d) * 2.0, 0.0, 1.0);
+    float falloff = 1.0 - dist;
+    float glow = falloff * falloff * (0.45 + 0.55 * falloff);
+    gl_FragColor = color * glow;
 }
 "#;
 
@@ -74,7 +109,9 @@ pub struct LightingPipeline {
     height: u32,
     lightmap_divisor: u32,
     pub multiply_mat: Option<macroquad::material::Material>,
+    pub composite_bloom_mat: Option<macroquad::material::Material>,
     pub radial_glow_mat: Option<macroquad::material::Material>,
+    pub radial_glow_accum_mat: Option<macroquad::material::Material>,
 }
 
 impl LightingPipeline {
@@ -109,6 +146,25 @@ impl LightingPipeline {
         )
         .ok();
 
+        let composite_bloom_mat = load_material(
+            ShaderSource::Glsl {
+                vertex: LIGHT_VERTEX_SHADER,
+                fragment: COMPOSITE_BLOOM_FRAGMENT_SHADER,
+            },
+            MaterialParams {
+                pipeline_params: PipelineParams {
+                    color_blend: Some(BlendState::new(
+                        Equation::Add,
+                        BlendFactor::Value(BlendValue::SourceAlpha),
+                        BlendFactor::Value(BlendValue::SourceColor),
+                    )),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .ok();
+
         let radial_glow_mat = load_material(
             ShaderSource::Glsl {
                 vertex: LIGHT_VERTEX_SHADER,
@@ -128,6 +184,25 @@ impl LightingPipeline {
         )
         .ok();
 
+        let radial_glow_accum_mat = load_material(
+            ShaderSource::Glsl {
+                vertex: LIGHT_VERTEX_SHADER,
+                fragment: RADIAL_GLOW_ACCUM_FRAGMENT_SHADER,
+            },
+            MaterialParams {
+                pipeline_params: PipelineParams {
+                    color_blend: Some(BlendState::new(
+                        Equation::Add,
+                        BlendFactor::One,
+                        BlendFactor::One,
+                    )),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .ok();
+
         Self {
             scene_rt,
             lightmap_rt,
@@ -135,7 +210,9 @@ impl LightingPipeline {
             height: h,
             lightmap_divisor: divisor.max(1),
             multiply_mat,
+            composite_bloom_mat,
             radial_glow_mat,
+            radial_glow_accum_mat,
         }
     }
 

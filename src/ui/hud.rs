@@ -79,11 +79,29 @@ impl HudLayoutSnapshot {
     }
 }
 
-pub fn build_stats_rows(fps: i32, world: &World, agents: &Agents) -> Vec<(&'static str, String)> {
+pub fn build_stats_rows(
+    fps: i32,
+    world: &World,
+    agents: &Agents,
+    ui: &UiState,
+) -> Vec<(&'static str, String)> {
     let particles =
         world.gas.len() + world.debris.len() + agents.drops.len() + agents.active_magic_count();
     vec![
         ("FPS", format!("{fps}")),
+        ("Smoothed FPS", format!("{:.1}", ui.smoothed_fps)),
+        (
+            "F4 Skip light",
+            if ui.skip_lighting { "ON" } else { "OFF" }.to_owned(),
+        ),
+        (
+            "F5 Skip bloom",
+            if ui.skip_bloom { "ON" } else { "OFF" }.to_owned(),
+        ),
+        (
+            "F6 Direct scene",
+            if ui.direct_scene { "ON" } else { "OFF" }.to_owned(),
+        ),
         ("Villagers", format!("{}", agents.villagers.len())),
         ("Crop yield", format!("{}", agents.total_crops_harvested)),
         ("Wood", format!("{}", agents.wood_stored)),
@@ -150,7 +168,7 @@ pub fn compute_hud_layout<F: Fn(&str, u16) -> f32>(
     };
 
     let stats_rows = if ui.stats_open {
-        build_stats_rows(fps, world, agents)
+        build_stats_rows(fps, world, agents, ui)
     } else {
         Vec::new()
     };

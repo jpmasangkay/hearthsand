@@ -529,7 +529,7 @@ fn soak_20min_seeds_1_to_30_all_presets() {
         } else {
             harvests_sorted.first().copied().unwrap_or(0) as f32
         };
-        let min_required_harvests = median_harvests * 0.40;
+        let min_required_harvests = median_harvests * 0.75;
         let min_harvests = harvests_sorted.first().copied().unwrap_or(0);
 
         eprintln!("=== {} (seeds 1..=30) ===", preset.name());
@@ -577,7 +577,7 @@ fn soak_20min_seeds_1_to_30_all_presets() {
             }
         }
         eprintln!(
-            "  SUMMARY {}: median_harvests={:.1} min_harvests={} (40%_floor={:.1}) | worst_same_job={:.0}s ({:?} on seed {}) | worst_stuck={:.0}s ({:?} on seed {}) | worst_reassign={}/30s ({:?} @ {:?} on seed {})",
+            "  SUMMARY {}: median_harvests={:.1} min_harvests={} (75%_floor={:.1}) | worst_same_job={:.0}s ({:?} on seed {}) | worst_stuck={:.0}s ({:?} on seed {}) | worst_reassign={}/30s ({:?} @ {:?} on seed {})",
             preset.name(),
             median_harvests,
             min_harvests,
@@ -597,7 +597,7 @@ fn soak_20min_seeds_1_to_30_all_presets() {
         for &(_, seed, ref r) in all_results.iter().filter(|&&(pi, _, _)| pi == p_idx) {
             assert!(
                 r.harvests as f32 >= min_required_harvests,
-                "{} (seed {}): crop harvests {} fell below 40% of 30-seed median {:.1} (required >= {:.1})",
+                "{} (seed {}): crop harvests {} fell below 75% of 30-seed median {:.1} (required >= {:.1})",
                 preset.name(),
                 seed,
                 r.harvests,

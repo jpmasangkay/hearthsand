@@ -58,7 +58,9 @@ fn reset_world_and_agents(
 #[macroquad::main(window_conf)]
 async fn main() {
     #[cfg(not(target_arch = "wasm32"))]
-    if std::env::var_os("HEARTHSAND_BENCH_NIGHT").is_some() {
+    if std::env::args().any(|a| a == "--bench")
+        || std::env::var_os("HEARTHSAND_BENCH_NIGHT").is_some()
+    {
         run_night_fit_zoom_bench().await;
         return;
     }
@@ -84,8 +86,13 @@ async fn main() {
     let mut ui = UiState::default();
 
     loop {
-        let frame_dt = get_frame_time().min(0.1);
+        let raw_dt = get_frame_time();
+        let frame_dt = raw_dt.min(0.1);
         anim_time += frame_dt;
+        if raw_dt > 1e-4 {
+            let inst_fps = 1.0 / raw_dt;
+            ui.smoothed_fps = ui.smoothed_fps * 0.90 + inst_fps * 0.10;
+        }
 
         let sw = screen_width().max(1.0);
         let sh = screen_height().max(1.0);
@@ -108,6 +115,15 @@ async fn main() {
         }
         if is_key_pressed(KeyCode::F3) {
             ui.stats_open = !ui.stats_open;
+        }
+        if is_key_pressed(KeyCode::F4) {
+            ui.skip_lighting = !ui.skip_lighting;
+        }
+        if is_key_pressed(KeyCode::F5) {
+            ui.skip_bloom = !ui.skip_bloom;
+        }
+        if is_key_pressed(KeyCode::F6) {
+            ui.direct_scene = !ui.direct_scene;
         }
         let shift_down = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
         if (is_key_pressed(KeyCode::Slash) && shift_down) || is_key_pressed(KeyCode::F1) {
@@ -409,119 +425,35 @@ async fn main() {
             anim_time,
         );
 
-        // Pass 1: Render scene into offscreen scene_rt
-        let mut scene_cam = make_camera(render_center, cam_zoom, sw, sh);
-        scene_cam.render_target = Some(lighting.scene_rt.clone());
-        set_camera(&scene_cam);
-        clear_background(UI_BASE_BG);
-
-        draw_texture_ex(
-            &terrain_tex,
-            0.0,
-            0.0,
-            WHITE,
-            DrawTextureParams {
-                dest_size: Some(vec2(WORLD_W_PX, WORLD_H_PX)),
-                ..Default::default()
-            },
-        );
-        agents.draw_sorted(
-            &world,
-            DrawSceneOpts {
-                view_min,
-                view_max,
-                anim_tick,
-                cam_zoom,
-                night_rim,
-            },
-        );
-        draw_gas_particles(&world, view_min, view_max);
-        draw_firefly_dots(&firefly_dots);
-
-        if !over_ui && World::in_bounds(hover_tx, hover_ty) {
-            if agents.mage_active {
-                draw_aim_reticle(mouse_world, agents.mage.wand.payload.color());
-            } else {
-                draw_brush_preview(hover_tx, hover_ty, ui.brush_radius, active_tool);
-            }
-        }
-
-        // Pass 2: Build dynamic lightmap in lightmap_rt (ambient time-of-day + additive radial glows)
-        let mut light_cam = make_camera(render_center, cam_zoom, sw, sh);
-        light_cam.render_target = Some(lighting.lightmap_rt.clone());
-        set_camera(&light_cam);
-        clear_background(ambient);
-
-        if let Some(glow_mat) = &lighting.radial_glow_mat {
-            gl_use_material(glow_mat);
-            for g in &glows {
-                draw_rectangle(
-                    g.pos.x - g.radius,
-                    g.pos.y - g.radius,
-                    g.radius * 2.0,
-                    g.radius * 2.0,
-                    g.color,
-                );
-            }
-            gl_use_default_material();
-        }
-
-        // Pass 3: Composite scene * lightmap (multiply), then additive radial glow pass
-        set_default_camera();
-        clear_background(UI_BASE_BG);
-        draw_texture_ex(
-            &lighting.scene_rt.texture,
-            0.0,
-            0.0,
-            WHITE,
-            DrawTextureParams {
-                dest_size: Some(vec2(sw, sh)),
-                ..Default::default()
-            },
-        );
-
-        if let Some(mul_mat) = &lighting.multiply_mat {
-            gl_use_material(mul_mat);
-            draw_texture_ex(
-                &lighting.lightmap_rt.texture,
-                0.0,
-                0.0,
-                WHITE,
-                DrawTextureParams {
-                    dest_size: Some(vec2(sw, sh)),
-                    ..Default::default()
-                },
-            );
-            gl_use_default_material();
-        }
-
-        let screen_world_cam = make_camera(render_center, cam_zoom, sw, sh);
-        if let Some(glow_mat) = &lighting.radial_glow_mat {
-            let bloom_scale = 0.45 + 0.55 * darkness;
-            set_camera(&screen_world_cam);
-            gl_use_material(glow_mat);
-            for g in &glows {
-                let bloom_r = g.radius * 0.72;
-                let bloom_col = Color::new(
-                    g.color.r,
-                    g.color.g,
-                    g.color.b,
-                    (g.color.a * g.bloom_alpha * bloom_scale).clamp(0.0, 1.0),
-                );
-                draw_rectangle(
-                    g.pos.x - bloom_r,
-                    g.pos.y - bloom_r,
-                    bloom_r * 2.0,
-                    bloom_r * 2.0,
-                    bloom_col,
-                );
-            }
-            gl_use_default_material();
-        }
-
-        // Mask any area outside the world rect with UI base color (#1e1e2e)
-        set_default_camera();
-        draw_world_letterbox(&screen_world_cam, sw, sh);
+        let show_cursor_preview = !over_ui && World::in_bounds(hover_tx, hover_ty);
+        render_world_and_lighting(RenderFrameParams {
+            world: &world,
+            agents: &agents,
+            terrain_tex: &terrain_tex,
+            lighting: &lighting,
+            render_center,
+            cam_zoom,
+            sw,
+            sh,
+            view_min,
+            view_max,
+            anim_tick,
+            ambient,
+            night_rim,
+            darkness,
+            firefly_dots: &firefly_dots,
+            glows: &glows,
+            show_cursor_preview,
+            mouse_world,
+            hover_tx,
+            hover_ty,
+            brush_radius: ui.brush_radius,
+            active_tool,
+            skip_lighting: ui.skip_lighting,
+            skip_bloom: ui.skip_bloom,
+            direct_scene: ui.direct_scene,
+            merged_composite_bloom: true,
+        });
 
         // Unlit screen-space weather & HUD
         draw_weather_overlay(&world, sw, sh, 0.0, 0.0, anim_time);
@@ -599,36 +531,303 @@ async fn main() {
     }
 }
 
+struct RenderFrameParams<'a> {
+    world: &'a World,
+    agents: &'a Agents,
+    terrain_tex: &'a Texture2D,
+    lighting: &'a LightingPipeline,
+    render_center: Vec2,
+    cam_zoom: f32,
+    sw: f32,
+    sh: f32,
+    view_min: (usize, usize),
+    view_max: (usize, usize),
+    anim_tick: usize,
+    ambient: Color,
+    night_rim: f32,
+    darkness: f32,
+    firefly_dots: &'a [(Vec2, Color)],
+    glows: &'a [agents::GlowLight],
+    show_cursor_preview: bool,
+    mouse_world: Vec2,
+    hover_tx: i32,
+    hover_ty: i32,
+    brush_radius: i32,
+    active_tool: BrushTool,
+    skip_lighting: bool,
+    skip_bloom: bool,
+    direct_scene: bool,
+    merged_composite_bloom: bool,
+}
+
+fn draw_scene_contents(p: &RenderFrameParams<'_>) {
+    draw_texture_ex(
+        p.terrain_tex,
+        0.0,
+        0.0,
+        WHITE,
+        DrawTextureParams {
+            dest_size: Some(vec2(WORLD_W_PX, WORLD_H_PX)),
+            ..Default::default()
+        },
+    );
+    p.agents.draw_sorted(
+        p.world,
+        DrawSceneOpts {
+            view_min: p.view_min,
+            view_max: p.view_max,
+            anim_tick: p.anim_tick,
+            cam_zoom: p.cam_zoom,
+            night_rim: p.night_rim,
+        },
+    );
+    draw_gas_particles(p.world, p.view_min, p.view_max);
+    draw_firefly_dots(p.firefly_dots);
+
+    if p.show_cursor_preview {
+        if p.agents.mage_active {
+            draw_aim_reticle(p.mouse_world, p.agents.mage.wand.payload.color());
+        } else {
+            draw_brush_preview(p.hover_tx, p.hover_ty, p.brush_radius, p.active_tool);
+        }
+    }
+}
+
+fn build_lightmap_rt(p: &RenderFrameParams<'_>) {
+    let mut light_cam = make_camera(p.render_center, p.cam_zoom, p.sw, p.sh);
+    light_cam.render_target = Some(p.lighting.lightmap_rt.clone());
+    set_camera(&light_cam);
+
+    if p.merged_composite_bloom {
+        // Clear alpha to 0.0 so lightmap_rt.a accumulates radial bloom intensity in the same pass
+        clear_background(Color::new(p.ambient.r, p.ambient.g, p.ambient.b, 0.0));
+        if let Some(accum_mat) = &p.lighting.radial_glow_accum_mat {
+            let bloom_scale = 0.45 + 0.55 * p.darkness;
+            gl_use_material(accum_mat);
+            for g in p.glows {
+                let a = g.color.a.clamp(0.0, 1.0);
+                let bloom_a = (a * g.bloom_alpha * bloom_scale).clamp(0.0, 1.0);
+                let premul = Color::new(g.color.r * a, g.color.g * a, g.color.b * a, bloom_a);
+                draw_rectangle(
+                    g.pos.x - g.radius,
+                    g.pos.y - g.radius,
+                    g.radius * 2.0,
+                    g.radius * 2.0,
+                    premul,
+                );
+            }
+            gl_use_default_material();
+        }
+    } else {
+        clear_background(p.ambient);
+        if let Some(glow_mat) = &p.lighting.radial_glow_mat {
+            gl_use_material(glow_mat);
+            for g in p.glows {
+                draw_rectangle(
+                    g.pos.x - g.radius,
+                    g.pos.y - g.radius,
+                    g.radius * 2.0,
+                    g.radius * 2.0,
+                    g.color,
+                );
+            }
+            gl_use_default_material();
+        }
+    }
+}
+
+fn composite_lightmap_and_bloom(p: &RenderFrameParams<'_>, screen_world_cam: &Camera2D) {
+    set_default_camera();
+    if p.merged_composite_bloom {
+        // Single full-screen draw applies both lightmap multiply and additive radial bloom
+        if let Some(comp_mat) = &p.lighting.composite_bloom_mat {
+            let bloom_gate = if p.skip_bloom { 0.0 } else { 1.0 };
+            gl_use_material(comp_mat);
+            draw_texture_ex(
+                &p.lighting.lightmap_rt.texture,
+                0.0,
+                0.0,
+                Color::new(1.0, 1.0, 1.0, bloom_gate),
+                DrawTextureParams {
+                    dest_size: Some(vec2(p.sw, p.sh)),
+                    ..Default::default()
+                },
+            );
+            gl_use_default_material();
+        }
+    } else {
+        if let Some(mul_mat) = &p.lighting.multiply_mat {
+            gl_use_material(mul_mat);
+            draw_texture_ex(
+                &p.lighting.lightmap_rt.texture,
+                0.0,
+                0.0,
+                WHITE,
+                DrawTextureParams {
+                    dest_size: Some(vec2(p.sw, p.sh)),
+                    ..Default::default()
+                },
+            );
+            gl_use_default_material();
+        }
+        if !p.skip_bloom {
+            if let Some(glow_mat) = &p.lighting.radial_glow_mat {
+                let bloom_scale = 0.45 + 0.55 * p.darkness;
+                set_camera(screen_world_cam);
+                gl_use_material(glow_mat);
+                for g in p.glows {
+                    let bloom_r = g.radius * 0.72;
+                    let bloom_col = Color::new(
+                        g.color.r,
+                        g.color.g,
+                        g.color.b,
+                        (g.color.a * g.bloom_alpha * bloom_scale).clamp(0.0, 1.0),
+                    );
+                    draw_rectangle(
+                        g.pos.x - bloom_r,
+                        g.pos.y - bloom_r,
+                        bloom_r * 2.0,
+                        bloom_r * 2.0,
+                        bloom_col,
+                    );
+                }
+                gl_use_default_material();
+            }
+        }
+    }
+}
+
+fn render_world_and_lighting(p: RenderFrameParams<'_>) {
+    let screen_world_cam = make_camera(p.render_center, p.cam_zoom, p.sw, p.sh);
+
+    if p.direct_scene {
+        // F6 ON (default): build 1/4-res lightmap offscreen first, then draw scene directly to FBO 0
+        if !p.skip_lighting {
+            build_lightmap_rt(&p);
+        }
+        set_camera(&screen_world_cam);
+        clear_background(UI_BASE_BG);
+        draw_scene_contents(&p);
+        if !p.skip_lighting {
+            composite_lightmap_and_bloom(&p, &screen_world_cam);
+        }
+    } else {
+        // F6 OFF: render scene into full-res offscreen scene_rt, then blit scene_rt to FBO 0
+        let mut scene_cam = make_camera(p.render_center, p.cam_zoom, p.sw, p.sh);
+        scene_cam.render_target = Some(p.lighting.scene_rt.clone());
+        set_camera(&scene_cam);
+        clear_background(UI_BASE_BG);
+        draw_scene_contents(&p);
+
+        if !p.skip_lighting {
+            build_lightmap_rt(&p);
+        }
+
+        set_default_camera();
+        clear_background(UI_BASE_BG);
+        draw_texture_ex(
+            &p.lighting.scene_rt.texture,
+            0.0,
+            0.0,
+            WHITE,
+            DrawTextureParams {
+                dest_size: Some(vec2(p.sw, p.sh)),
+                ..Default::default()
+            },
+        );
+        if !p.skip_lighting {
+            composite_lightmap_and_bloom(&p, &screen_world_cam);
+        }
+    }
+
+    // Mask any area outside the world rect with UI base color (#1e1e2e)
+    set_default_camera();
+    draw_world_letterbox(&screen_world_cam, p.sw, p.sh);
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 async fn run_night_fit_zoom_bench() {
     use render::{collect_scene_glows_and_fireflies_with_cap, LIGHTMAP_DIVISOR, MAX_GLOW_LIGHTS};
     use std::time::Instant;
 
-    let presets = [
-        Preset::LushRiverIsland,
-        Preset::VolcanicCrater,
-        Preset::DroughtValley,
-    ];
-    let configs = [
-        ("BEFORE (1x lightmap, uncapped glows)", 1_u32, usize::MAX),
-        (
-            "AFTER  (1/4 lightmap, cap 64 glows)",
-            LIGHTMAP_DIVISOR,
-            MAX_GLOW_LIGHTS,
-        ),
+    struct BenchMode {
+        label: &'static str,
+        skip_lighting: bool,
+        skip_bloom: bool,
+        direct_scene: bool,
+        merged_composite_bloom: bool,
+    }
+
+    let modes = [
+        BenchMode {
+            label: "BEFORE baseline   (F4=OFF, F5=OFF, F6=OFF | scene_rt + separate bloom)",
+            skip_lighting: false,
+            skip_bloom: false,
+            direct_scene: false,
+            merged_composite_bloom: false,
+        },
+        BenchMode {
+            label: "Toggle F4=ON      (F4=ON,  F5=OFF, F6=OFF | skip lighting & bloom)    ",
+            skip_lighting: true,
+            skip_bloom: false,
+            direct_scene: false,
+            merged_composite_bloom: false,
+        },
+        BenchMode {
+            label: "Toggle F5=ON      (F4=OFF, F5=ON,  F6=OFF | skip bloom only)          ",
+            skip_lighting: false,
+            skip_bloom: true,
+            direct_scene: false,
+            merged_composite_bloom: false,
+        },
+        BenchMode {
+            label: "Toggle F6=ON      (F4=OFF, F5=OFF, F6=ON  | direct scene, no scene_rt)",
+            skip_lighting: false,
+            skip_bloom: false,
+            direct_scene: true,
+            merged_composite_bloom: false,
+        },
+        BenchMode {
+            label: "Toggles F5+F6=ON  (F4=OFF, F5=ON,  F6=ON  | direct scene + skip bloom)",
+            skip_lighting: false,
+            skip_bloom: true,
+            direct_scene: true,
+            merged_composite_bloom: false,
+        },
+        BenchMode {
+            label: "Toggles F4+F6=ON  (F4=ON,  F5=OFF, F6=ON  | direct scene + skip light)",
+            skip_lighting: true,
+            skip_bloom: false,
+            direct_scene: true,
+            merged_composite_bloom: false,
+        },
+        BenchMode {
+            label: "AFTER  optimized  (F4=OFF, F5=OFF, F6=ON  | direct + merged comp+bloom)",
+            skip_lighting: false,
+            skip_bloom: false,
+            direct_scene: true,
+            merged_composite_bloom: true,
+        },
     ];
 
-    // Warm up window/GL context for 10 frames
-    for _ in 0..10 {
+    // Warm up window/GL context for 15 frames
+    for _ in 0..15 {
         clear_background(UI_BASE_BG);
         next_frame().await;
     }
 
-    for &preset in &presets {
-        eprintln!("=== Night Fit-Zoom Benchmark: {} ===", preset.name());
-        for &(label, div, glow_cap) in &configs {
+    for &preset in &[
+        Preset::VolcanicCrater,
+        Preset::LushRiverIsland,
+        Preset::DroughtValley,
+    ] {
+        eprintln!(
+            "=== Night Fit-Zoom Benchmark (--release, night tod=0.90): {} ===",
+            preset.name()
+        );
+        for mode in &modes {
             let (mut world, mut agents, _, _) = reset_world_and_agents(preset, 42, false);
-            world.time_of_day = 0.90; // Night
+            world.time_of_day = 0.90;
             for _ in 0..120 {
                 world.step();
                 let cmds = agents.update(&world, SIM_DT);
@@ -640,29 +839,91 @@ async fn run_night_fit_zoom_bench() {
             let mut terrain_raster = TerrainRasterizer::new(&world, 0.0);
             let terrain_tex = Texture2D::from_image(&terrain_raster.img);
             terrain_tex.set_filter(FilterMode::Nearest);
-            let mut lighting = LightingPipeline::new_with_divisor(sw, sh, div);
+            let mut lighting = LightingPipeline::new_with_divisor(sw, sh, LIGHTMAP_DIVISOR);
 
             let cam_zoom = fit_world_zoom_snapped(sw, sh);
             let cam_center =
                 clamp_camera_center(vec2(WORLD_W_PX * 0.5, WORLD_H_PX * 0.5), cam_zoom, sw, sh);
             let mut speed = SpeedMode::Normal;
-            let mut ui = UiState::default();
+            let mut ui = UiState {
+                stats_open: true,
+                skip_lighting: mode.skip_lighting,
+                skip_bloom: mode.skip_bloom,
+                direct_scene: mode.direct_scene,
+                smoothed_fps: 60.0,
+                ..UiState::default()
+            };
+
+            // 15 warmup frames per mode so smoothed_fps and swap cadence stabilize
+            for wf in 0..15_u32 {
+                let anim_time = wf as f32 / 60.0;
+                let raw_dt = get_frame_time();
+                if raw_dt > 1e-4 {
+                    ui.smoothed_fps = ui.smoothed_fps * 0.85 + (1.0 / raw_dt) * 0.15;
+                }
+                let (view_min, view_max) = visible_tile_bounds(cam_center, cam_zoom, sw, sh);
+                let ambient = ambient_light_color(0.90, world.weather);
+                let night_rim = night_rim_strength(ambient);
+                let darkness = (1.0 - (ambient.r + ambient.g + ambient.b) / 3.0).clamp(0.0, 1.0);
+                let (firefly_dots, glows) = collect_scene_glows_and_fireflies_with_cap(
+                    &world,
+                    &agents,
+                    view_min,
+                    view_max,
+                    cam_center,
+                    anim_time,
+                    MAX_GLOW_LIGHTS,
+                );
+                render_world_and_lighting(RenderFrameParams {
+                    world: &world,
+                    agents: &agents,
+                    terrain_tex: &terrain_tex,
+                    lighting: &lighting,
+                    render_center: cam_center,
+                    cam_zoom,
+                    sw,
+                    sh,
+                    view_min,
+                    view_max,
+                    anim_tick: (anim_time * 6.0) as usize,
+                    ambient,
+                    night_rim,
+                    darkness,
+                    firefly_dots: &firefly_dots,
+                    glows: &glows,
+                    show_cursor_preview: false,
+                    mouse_world: cam_center,
+                    hover_tx: 80,
+                    hover_ty: 50,
+                    brush_radius: ui.brush_radius,
+                    active_tool: ui.selected_tool,
+                    skip_lighting: ui.skip_lighting,
+                    skip_bloom: ui.skip_bloom,
+                    direct_scene: ui.direct_scene,
+                    merged_composite_bloom: mode.merged_composite_bloom,
+                });
+                next_frame().await;
+            }
 
             let frames = 90_u32;
-            let mut t_sim_raster_ms = 0.0_f64;
-            let mut t_pass1_ms = 0.0_f64;
-            let mut t_pass2_ms = 0.0_f64;
-            let mut t_pass3_ms = 0.0_f64;
-            let mut t_hud_ms = 0.0_f64;
-            let mut glow_count_last = 0_usize;
+            let wall_start = Instant::now();
+            let mut cpu_submit_ms_sum = 0.0_f64;
 
             for f in 0..frames {
-                let anim_time = f as f32 / 60.0;
+                let anim_time = (f + 15) as f32 / 60.0;
+                let raw_dt = get_frame_time();
+                if raw_dt > 1e-4 {
+                    ui.smoothed_fps = ui.smoothed_fps * 0.90 + (1.0 / raw_dt) * 0.10;
+                }
                 let sw = screen_width().max(1.0);
                 let sh = screen_height().max(1.0);
                 lighting.ensure_size(sw, sh);
 
-                let t0 = Instant::now();
+                // Acquire FBO 0 drawable first so VSync swap wait is excluded from CPU submission timer
+                set_default_camera();
+                clear_background(UI_BASE_BG);
+
+                let t_cpu = Instant::now();
                 world.step();
                 world.time_of_day = 0.90;
                 let cmds = agents.update(&world, SIM_DT);
@@ -670,147 +931,73 @@ async fn run_night_fit_zoom_bench() {
                 if terrain_raster.update(&world, anim_time) {
                     terrain_tex.update(&terrain_raster.img);
                 }
-                t_sim_raster_ms += t0.elapsed().as_secs_f64() * 1000.0;
 
                 let (view_min, view_max) = visible_tile_bounds(cam_center, cam_zoom, sw, sh);
                 let anim_tick = (anim_time * 6.0) as usize;
                 let ambient = ambient_light_color(world.time_of_day, world.weather);
                 let night_rim = night_rim_strength(ambient);
                 let darkness = (1.0 - (ambient.r + ambient.g + ambient.b) / 3.0).clamp(0.0, 1.0);
-
-                // Pass 1: Scene RT
-                let t1 = Instant::now();
                 let (firefly_dots, glows) = collect_scene_glows_and_fireflies_with_cap(
-                    &world, &agents, view_min, view_max, cam_center, anim_time, glow_cap,
-                );
-                glow_count_last = glows.len();
-                let mut scene_cam = make_camera(cam_center, cam_zoom, sw, sh);
-                scene_cam.render_target = Some(lighting.scene_rt.clone());
-                set_camera(&scene_cam);
-                clear_background(UI_BASE_BG);
-                draw_texture_ex(
-                    &terrain_tex,
-                    0.0,
-                    0.0,
-                    WHITE,
-                    DrawTextureParams {
-                        dest_size: Some(vec2(WORLD_W_PX, WORLD_H_PX)),
-                        ..Default::default()
-                    },
-                );
-                agents.draw_sorted(
                     &world,
-                    DrawSceneOpts {
-                        view_min,
-                        view_max,
-                        anim_tick,
-                        cam_zoom,
-                        night_rim,
-                    },
+                    &agents,
+                    view_min,
+                    view_max,
+                    cam_center,
+                    anim_time,
+                    MAX_GLOW_LIGHTS,
                 );
-                draw_gas_particles(&world, view_min, view_max);
-                draw_firefly_dots(&firefly_dots);
-                t_pass1_ms += t1.elapsed().as_secs_f64() * 1000.0;
 
-                // Pass 2: Lightmap RT
-                let t2 = Instant::now();
-                let mut light_cam = make_camera(cam_center, cam_zoom, sw, sh);
-                light_cam.render_target = Some(lighting.lightmap_rt.clone());
-                set_camera(&light_cam);
-                clear_background(ambient);
-                if let Some(glow_mat) = &lighting.radial_glow_mat {
-                    gl_use_material(glow_mat);
-                    for g in &glows {
-                        draw_rectangle(
-                            g.pos.x - g.radius,
-                            g.pos.y - g.radius,
-                            g.radius * 2.0,
-                            g.radius * 2.0,
-                            g.color,
-                        );
-                    }
-                    gl_use_default_material();
-                }
-                t_pass2_ms += t2.elapsed().as_secs_f64() * 1000.0;
+                render_world_and_lighting(RenderFrameParams {
+                    world: &world,
+                    agents: &agents,
+                    terrain_tex: &terrain_tex,
+                    lighting: &lighting,
+                    render_center: cam_center,
+                    cam_zoom,
+                    sw,
+                    sh,
+                    view_min,
+                    view_max,
+                    anim_tick,
+                    ambient,
+                    night_rim,
+                    darkness,
+                    firefly_dots: &firefly_dots,
+                    glows: &glows,
+                    show_cursor_preview: false,
+                    mouse_world: cam_center,
+                    hover_tx: 80,
+                    hover_ty: 50,
+                    brush_radius: ui.brush_radius,
+                    active_tool: ui.selected_tool,
+                    skip_lighting: ui.skip_lighting,
+                    skip_bloom: ui.skip_bloom,
+                    direct_scene: ui.direct_scene,
+                    merged_composite_bloom: mode.merged_composite_bloom,
+                });
 
-                // Pass 3: Multiply composite + additive bloom + letterbox
-                let t3 = Instant::now();
-                set_default_camera();
-                clear_background(UI_BASE_BG);
-                draw_texture_ex(
-                    &lighting.scene_rt.texture,
-                    0.0,
-                    0.0,
-                    WHITE,
-                    DrawTextureParams {
-                        dest_size: Some(vec2(sw, sh)),
-                        ..Default::default()
-                    },
-                );
-                if let Some(mul_mat) = &lighting.multiply_mat {
-                    gl_use_material(mul_mat);
-                    draw_texture_ex(
-                        &lighting.lightmap_rt.texture,
-                        0.0,
-                        0.0,
-                        WHITE,
-                        DrawTextureParams {
-                            dest_size: Some(vec2(sw, sh)),
-                            ..Default::default()
-                        },
-                    );
-                    gl_use_default_material();
-                }
-                let screen_world_cam = make_camera(cam_center, cam_zoom, sw, sh);
-                if let Some(glow_mat) = &lighting.radial_glow_mat {
-                    let bloom_scale = 0.45 + 0.55 * darkness;
-                    set_camera(&screen_world_cam);
-                    gl_use_material(glow_mat);
-                    for g in &glows {
-                        let bloom_r = g.radius * 0.72;
-                        let bloom_col = Color::new(
-                            g.color.r,
-                            g.color.g,
-                            g.color.b,
-                            (g.color.a * g.bloom_alpha * bloom_scale).clamp(0.0, 1.0),
-                        );
-                        draw_rectangle(
-                            g.pos.x - bloom_r,
-                            g.pos.y - bloom_r,
-                            bloom_r * 2.0,
-                            bloom_r * 2.0,
-                            bloom_col,
-                        );
-                    }
-                    gl_use_default_material();
-                }
-                set_default_camera();
-                draw_world_letterbox(&screen_world_cam, sw, sh);
-                t_pass3_ms += t3.elapsed().as_secs_f64() * 1000.0;
-
-                // Pass 4: HUD + weather
-                let t4 = Instant::now();
                 draw_weather_overlay(&world, sw, sh, 0.0, 0.0, anim_time);
                 let hud_snap =
                     compute_hud_layout(sw, sh, get_fps(), &world, &agents, &ui, &measure_ui_width);
                 let _ = draw_hud(&hud_snap, &mut speed, &world, &mut agents, &mut ui);
-                t_hud_ms += t4.elapsed().as_secs_f64() * 1000.0;
+                cpu_submit_ms_sum += t_cpu.elapsed().as_secs_f64() * 1000.0;
 
                 next_frame().await;
             }
 
-            let nf = frames as f64;
-            let total_cpu_gl_ms =
-                (t_sim_raster_ms + t_pass1_ms + t_pass2_ms + t_pass3_ms + t_hud_ms) / nf;
+            let wall_ms_per_frame = wall_start.elapsed().as_secs_f64() * 1000.0 / frames as f64;
+            let wall_fps = 1000.0 / wall_ms_per_frame.max(1e-6);
+            let cpu_ms_per_frame = cpu_submit_ms_sum / frames as f64;
+            let cpu_equiv_fps = 1000.0 / cpu_ms_per_frame.max(1e-6);
+
             eprintln!(
-                "  {label}: glows={glow_count_last:3} | sim+raster={:.3}ms | pass1_scene={:.3}ms | pass2_lightmap={:.3}ms | pass3_composite+bloom={:.3}ms | hud={:.3}ms | render_passes_sum={:.3}ms | total={:.3}ms",
-                t_sim_raster_ms / nf,
-                t_pass1_ms / nf,
-                t_pass2_ms / nf,
-                t_pass3_ms / nf,
-                t_hud_ms / nf,
-                (t_pass1_ms + t_pass2_ms + t_pass3_ms) / nf,
-                total_cpu_gl_ms,
+                "  {} | in_game_fps={:5.1} (smoothed_fps={:5.1}, frame_to_frame={:5.2}ms) | cpu_side={:5.3}ms (cpu_equiv_fps={:6.1})",
+                mode.label,
+                wall_fps,
+                ui.smoothed_fps,
+                wall_ms_per_frame,
+                cpu_ms_per_frame,
+                cpu_equiv_fps,
             );
         }
     }

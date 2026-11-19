@@ -20,7 +20,7 @@ pub const CONTROLS_ROWS: [(&str, &str); 11] = [
     ("Tab / B", "Toggle God-Mage / Wand Builder"),
     ("V / T", "Cycle weather / Advance time"),
     ("P / R", "Next preset / Reset world seed"),
-    ("F3 / ?", "Toggle full stats / Controls"),
+    ("F3 / F4-F6 / ?", "Stats / Render toggles / Help"),
 ];
 
 #[derive(Clone, Debug)]

@@ -138,8 +138,8 @@ cargo test -- --nocapture
 # Run the full 90-run (30 seeds x 3 presets) 20-minute soak & productivity suite
 cargo test --release soak_20min_seeds_1_to_30_all_presets -- --ignored --nocapture
 
-# Run the live --release night fit-zoom per-pass rendering benchmark
-HEARTHSAND_BENCH_NIGHT=1 cargo run --release
+# Run the live --release night fit-zoom rendering benchmark (F4/F5/F6 toggle matrix & before/after comparison)
+cargo run --release -- --bench
 ```
 
 ### WebAssembly (WASM) Web Build & Local Server
@@ -185,7 +185,8 @@ python3 -m http.server --directory dist 8080
 | **Reset World (Next Seed `seed + 1`)** | `R` |
 | **Cycle Weather** | `V` (`Clear` / `Rainstorm` / `Heatwave`) |
 | **Advance Time-of-Day Phase** | `T` (`Night` / `Dawn` / `Day` / `Dusk`) |
-| **Toggle Full Stats Panel** | `F3` |
+| **Toggle Full Stats Panel** | `F3` (shows `FPS`, `Smoothed FPS`, `F4`/`F5`/`F6` states, colony & chunk metrics) |
+| **Debug Render Toggles (Lighting / Bloom / Direct Scene)** | `F4` (skip lighting), `F5` (skip bloom), `F6` (direct scene without `scene_rt`) |
 | **Toggle Controls Overlay** | `?` (`Shift + /`), `F1`, or bottom-right `?` button |
 | **Close Active Overlay / Drawer** | `Esc` |
 

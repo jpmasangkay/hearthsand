@@ -596,7 +596,7 @@ pub struct Villager {
     pub carrying: Option<ItemKind>,
     pub thought: Option<ThoughtIcon>,
     pub thought_timer: f32,
-    pub(super) target_tile: Option<(i32, i32)>,
+    pub(crate) target_tile: Option<(i32, i32)>,
     pub(super) target_adjacent: bool,
     pub(super) path: Vec<(i32, i32)>,
     pub(super) path_idx: usize,
@@ -605,7 +605,7 @@ pub struct Villager {
     pub(super) chop_hits: u8,
     pub(super) failed_targets: Vec<(JobKind, (i32, i32), f32)>,
     #[cfg(test)]
-    pub(super) assign_history: Vec<(f32, JobKind, (i32, i32), Vec2)>,
+    pub(crate) assign_history: Vec<(f32, JobKind, (i32, i32), Vec2)>,
 }
 
 impl Villager {

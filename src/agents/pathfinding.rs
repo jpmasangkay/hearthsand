@@ -631,6 +631,12 @@ pub(super) fn find_nearest_crop_or_bush(
     let mut best_d2 = max_px * max_px;
 
     for &(x, y) in &scan.all_crops {
+        if !world
+            .get(x, y)
+            .is_some_and(|c| matches!(c.material, Material::Crop(s) if s >= 2))
+        {
+            continue;
+        }
         let d2 = tile_center(x, y).distance_squared(pos);
         if d2 < best_d2 {
             best_d2 = d2;
@@ -649,7 +655,7 @@ pub(super) fn find_nearest_crop_or_bush(
             let x = tx + dx;
             let y = ty + dy;
             if let Some(c) = world.get(x, y) {
-                if matches!(c.material, Material::Crop(_))
+                if matches!(c.material, Material::Crop(s) if s >= 2)
                     || (c.material == Material::BerryBush && c.has_berries())
                 {
                     let d2 = tile_center(x, y).distance_squared(pos);
