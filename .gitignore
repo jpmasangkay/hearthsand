@@ -1,0 +1,17 @@
+# Rust / Cargo build artifacts
+/target/
+**/*.rs.bk
+
+# Staged WebAssembly static site output
+/dist/
+
+# macOS / OS metadata
+.DS_Store
+Thumbs.db
+
+# Editor & IDE directories
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

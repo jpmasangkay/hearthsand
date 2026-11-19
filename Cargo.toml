@@ -1,0 +1,18 @@
+[package]
+name = "hearthsand"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.87"
+
+[dependencies]
+macroquad = "0.4"
+noise = "0.9"
+rand = { version = "0.8", default-features = false, features = ["alloc", "std_rng"] }
+
+[profile.test]
+opt-level = 2
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
